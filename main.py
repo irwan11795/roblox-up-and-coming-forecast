@@ -15,9 +15,11 @@ under 72 hours ago, versus older).  The kernel captures what a single
 Normal cannot: rank-dependent drift (top games fall back, deep games climb
 on average), rank-dependent spread, the fat tail of viral climbs, and the
 newcomer boost (games fresh on the chart reach the top 10 far more often).
-Per-place probabilities are averaged over the 72 forecast hours, then the
-best candidates at each place are rescaled to sum to 0.75.  Games age out
-of the chart 28 days after creation when that date is known.
+Per-place probabilities are averaged over the 72 forecast hours, then
+sharpened with a temperature of 1.15 (the mid-range was slightly
+overconfident in calibration), and the best candidates at each place are
+rescaled to sum to 0.75.  Games age out of the chart 28 days after
+creation when that date is known.
 """
 
 import json
@@ -25,17 +27,22 @@ import math
 import os
 from datetime import datetime, timedelta
 
-# Tuned on 20 rolling 72h hold-out windows of the public chart archive
-# (mean log score -37.23 vs -37.63 for the pure-Normal v1; wins 15 of 20
-# windows and never loses one; practice window -35.23 vs v1 -35.88).
+# v3 = v2 with two changes, validated on the public chart archive:
+#   VEL_CLAMP 1.5 -> 2.5 (lets strong climbers drift further) and
+#   TEMP 1.15 (sharpens the per-place averages).
+# Practice window -34.95 vs v2 -35.23; 20 rolling 72h hold-out windows
+# mean -37.14 vs v2 -37.23 (wins 13 of 20); 33-window mean -37.79 vs
+# -37.88; 6-cut mean -38.79 vs -38.98.  v2 itself: mean -37.23 vs -37.63
+# for the pure-Normal v1 (wins 15 of 20); practice -35.23 vs v1 -35.88.
 ALPHA = 0.35          # empirical-kernel blend weight
+TEMP = 1.15           # temperature on per-place averages (>1 sharpens)
 NAMED = 0.75          # probability mass named per place
 AGE_CUT = 72.0        # hours: fresh vs old chart age
 SIGMA_MAX = 1.0
 SIGMA_MIN = 0.25
 SPREAD_CAP = 14.0
 VEL_TAU = 6.0         # velocity saturation timescale, hours
-VEL_CLAMP = 1.5       # ranks per hour
+VEL_CLAMP = 2.5       # ranks per hour
 VEL_HALFLIFE = 24.0   # velocity recency half-life, hours
 CAP = 30              # candidates named per place
 FLOOR = 0.003         # minimum average probability to name
@@ -263,6 +270,8 @@ def main():
                                     + (ALPHA * emp[place - 1]
                                        if emp else 0.0))
         averages[uid] = [total / slots for total in sums]
+        if TEMP != 1.0:
+            averages[uid] = [value ** TEMP for value in averages[uid]]
 
     # Per place: keep the best candidates above 0.003, at most 30, and
     # rescale them to sum to exactly 0.75, rounded to 6 decimals.
